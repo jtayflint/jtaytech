@@ -39,3 +39,4 @@ go.work.sum
 **/.gradle
 **/node_modules
 **/.idea
+weatherapi

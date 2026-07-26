@@ -65,29 +65,40 @@ func (h *WeatherHandler) GetWeather(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(weather)
+	if err = json.NewEncoder(w).Encode(weather); err != nil {
+		h.logger.Error("failed to encode weather response: %v", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
-func NewRouter(lc fx.Lifecycle, app *app.App, wh *WeatherHandler) {
+func NewRouter(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *app.App, wh *WeatherHandler) {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	// RESTful path parameters layout
 	r.Get("/weather/lat/{lat}/lon/{lon}", wh.GetWeather)
+	srv := &http.Server{
+		Addr:    ":" + app.Port,
+		Handler: r,
+	}
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 
 			wh.logger.Info("Starting HTTP Server", zap.String("port", app.Port))
 			go func() {
-				if err := http.ListenAndServe(":"+app.Port, r); err != nil && err != http.ErrServerClosed {
-					wh.logger.Fatal("HTTP server failed", zap.Error(err))
+				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					wh.logger.Error("HTTP server failed", zap.Error(err))
+					if inerr := shutdowner.Shutdown(); inerr != nil {
+						wh.logger.Error("Failed to shutdown application", zap.Error(inerr))
+					}
 				}
 			}()
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
 			wh.logger.Info("Stopping HTTP Server")
-			return nil
+			return srv.Shutdown(ctx)
 		},
 	})
 }
